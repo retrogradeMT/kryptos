@@ -1,0 +1,20 @@
+{
+  "files.associations": {
+    "*.json": "json"
+  },
+  "[json]": {
+    "editor.formatOnSave": true
+  },
+  "editor.formatOnSave": false,
+  "vetur.validation.template": false,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.formatOnSaveMode": "modifications",
+  "editor.trimFinalNewlines": false,
+  "vue.features.codeActions": false,
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "vue3snippets.enable-compile-vue-file-on-did-save-code": false
+}

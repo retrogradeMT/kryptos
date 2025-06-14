@@ -1,0 +1,33 @@
+{
+  "name": "scytaleCipher",
+  "description": "A really cool Edge Site for scytaleCipher",
+  "scripts": {
+    "generate:images": "node scripts/generateImageManifest.mjs",
+    "build": "npm run generate:images && nuxt build",
+    "dev": "npm run generate:images  && rm -rf .nuxt && nuxt dev --host --port=3000",
+    "generate": "npm run generate:images && nuxt generate",
+    "preview": "npm run generate:images && nuxt build && npx wrangler pages dev dist",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@fancyapps/ui": "^5.0.36",
+    "@nuxtjs/tailwindcss": "6.13.2",
+    "@vee-validate/nuxt": "^4.15.0",
+    "@vee-validate/rules": "^4.15.0",
+    "@vee-validate/zod": "^4.15.0",
+    "nuxt": "^3.16.1",
+    "scrollreveal": "^4.0.9",
+    "swiper": "^11.2.6",
+    "vue": "^3.5.13",
+    "vue-imask": "^7.6.1",
+    "vue-router": "^4.5.0",
+    "vue-turnstile": "^1.0.11",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^4.11.0",
+    "eslint": "^9",
+    "nitro-cloudflare-dev": "^0.2.2",
+    "wrangler": "^4.14.4"
+  }
+}
