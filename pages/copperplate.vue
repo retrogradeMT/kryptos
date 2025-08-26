@@ -23,7 +23,344 @@ import {
 } from '@heroicons/vue/20/solid'
 import { Bars3Icon, ChevronDownIcon, XMarkIcon } from '@heroicons/vue/24/outline'
 import { useStorage } from '@vueuse/core'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+
+// leave empty; we’ll seed from hidden textarea if present
+const seedTA = ref(null)
+
+onMounted(() => {
+  if (!STATIC_GRID_TEXT.value && seedTA.value) {
+    const val = seedTA.value.value || ''
+    STATIC_GRID_TEXT.value = val.trim()
+  }
+})
+
+// --- Selection helpers for Static Grid (copperplate) ---
+const selPath = computed(() => selectedCells.value
+  .slice()
+  .sort((a, b) => a.order - b.order))
+
+function getCharAt(r, c) {
+  const g = orientedGrid.value
+  if (!g || r < 0 || r >= g.length)
+    return ''
+  const row = g[r]
+  if (!row || c < 0 || c >= row.length)
+    return ''
+  return row[c]
+}
+
+function copyToClipboard(text) {
+  try { navigator.clipboard.writeText(text) }
+  catch (e) { console.warn('Clipboard failed', e) }
+}
+
+function copySelectedPath() {
+  const text = selPath.value.map(c => c.char || '').join('')
+  copyToClipboard(text)
+}
+
+function copyRowSpan() {
+  if (selectedCells.value.length < 2)
+    return
+  const [a, b] = selPath.value
+  if (a.row !== b.row) { alert('Pick two cells in the SAME row for Row Span'); return }
+  const r = a.row
+  const c0 = Math.min(a.col, b.col)
+  const c1 = Math.max(a.col, b.col)
+  let out = ''
+  for (let c = c0; c <= c1; c++) out += getCharAt(r, c)
+  copyToClipboard(out)
+}
+
+function copyColSpan() {
+  if (selectedCells.value.length < 2)
+    return
+  const [a, b] = selPath.value
+  if (a.col !== b.col) { alert('Pick two cells in the SAME column for Column Span'); return }
+  const c = a.col
+  const r0 = Math.min(a.row, b.row)
+  const r1 = Math.max(a.row, b.row)
+  let out = ''
+  for (let r = r0; r <= r1; r++) out += getCharAt(r, c)
+  copyToClipboard(out)
+}
+
+// --- Row block helpers ---
+function getRowString(r) {
+  const g = orientedGrid.value
+  if (!g || r < 0 || r >= g.length)
+    return ''
+  return g[r].join('')
+}
+
+function getRowsBetweenText() {
+  if (selectedCells.value.length < 2)
+    return ''
+  const [a, b] = selPath.value
+  const r0 = Math.min(a.row, b.row)
+  const r1 = Math.max(a.row, b.row)
+  const lines = []
+  for (let r = r0; r <= r1; r++) lines.push(getRowString(r))
+  return lines.join('\n')
+}
+
+function copyRowsBetween() {
+  const text = getRowsBetweenText()
+  if (!text) { alert('Pick any two cells to define start/end rows'); return }
+  copyToClipboard(text)
+}
+
+function sendRowsBetweenToDMS() {
+  const text = getRowsBetweenText()
+  if (!text) { alert('Pick any two cells to define start/end rows'); return }
+  const url = `/dms?inputMode=freetext&text=${encodeURIComponent(text)}`
+  window.open(url, '_blank')
+}
+
+function sendSelectionToDMS(mode = 'path') {
+  let text = ''
+  if (mode === 'row') {
+    if (selectedCells.value.length < 2) { alert('Pick two cells in same row'); return }
+    const [a, b] = selPath.value
+    if (a.row !== b.row) { alert('Row mode: choose same row'); return }
+    const r = a.row; const c0 = Math.min(a.col, b.col); const c1 = Math.max(a.col, b.col)
+    for (let c = c0; c <= c1; c++) text += getCharAt(r, c)
+  }
+  else if (mode === 'col') {
+    if (selectedCells.value.length < 2) { alert('Pick two cells in same column'); return }
+    const [a, b] = selPath.value
+    if (a.col !== b.col) { alert('Column mode: choose same column'); return }
+    const c = a.col; const r0 = Math.min(a.row, b.row); const r1 = Math.max(a.row, b.row)
+    for (let r = r0; r <= r1; r++) text += getCharAt(r, c)
+  }
+  else {
+    text = selPath.value.map(c => c.char || '').join('')
+  }
+  const url = `/dms?inputMode=freetext&text=${encodeURIComponent(text)}`
+  window.open(url, '_blank')
+}
+
+// Static grid + orientation (TREE/ROOTS)
+const STATIC_GRID_TEXT = ref('')
+const gridOrientation = ref('normal') // 'normal' | 'tree' | 'roots'
+
+function parseGridText(s) {
+  const rows = s.split(/\r?\n/).map(r => r.trim()).filter(Boolean)
+  if (!rows.length)
+    return []
+  return rows.map(r => r.split('')) // no padding, ragged rows preserved
+}
+function padToRect(grid, padChar = ' ') {
+  if (!grid || !grid.length)
+    return []
+  const Cmax = Math.max(...grid.map(r => r.length))
+  return grid.map((row) => {
+    const r = row.slice()
+    while (r.length < Cmax) r.push(padChar)
+    return r
+  })
+}
+
+function rotateGridCW(grid) {
+  if (!grid.length)
+    return []
+  const R = grid.length
+  const C = Math.max(...grid.map(r => r.length))
+  const out = []
+  for (let c = 0; c < C; c++) {
+    const row = []
+    for (let r = R - 1; r >= 0; r--) {
+      row.push(grid[r][c])
+    }
+    out.push(row)
+  }
+  return out
+}
+
+function rotateGridCCW(grid) {
+  if (!grid.length)
+    return []
+  const R = grid.length
+  const C = Math.max(...grid.map(r => r.length))
+  const out = []
+  for (let c = C - 1; c >= 0; c--) {
+    const row = []
+    for (let r = 0; r < R; r++) {
+      row.push(grid[r][c])
+    }
+    out.push(row)
+  }
+  return out
+}
+
+const parsedGrid = computed(() => parseGridText(STATIC_GRID_TEXT.value))
+const orientedGrid = computed(() => {
+  let g = parsedGrid.value
+  if (!g.length)
+    return []
+  // Pad ragged rows so rotations preserve column alignment
+  const rect = padToRect(g, ' ')
+  if (gridOrientation.value === 'tree') {
+    // TREE: counter‑clockwise (original row 1 becomes column 1)
+    return rotateGridCCW(rect)
+  }
+  if (gridOrientation.value === 'roots') {
+    // ROOTS: clockwise (opposite of TREE)
+    return rotateGridCW(rect)
+  }
+  return rect
+})
+
+// --- Bark mark helpers (left-edge row markers counted from bottom)
+// Sequence provided (from bottom, then relative jumps): 5, +4, +8, +4, +4
+const barkMarkerDeltas = [5, 4, 8, 4, 4]
+const barkMarkerRows = computed(() => {
+  const g = orientedGrid.value
+  const R = g?.length || 0
+  if (!R)
+    return new Set()
+  // turn deltas into cumulative offsets from the bottom
+  const cumul = []
+  let s = 0
+  for (const d of barkMarkerDeltas) { s += d; cumul.push(s) }
+  const set = new Set()
+  for (const off of cumul) {
+    const idx = R - off // 0-based row index
+    if (idx >= 0 && idx < R)
+      set.add(idx)
+  }
+  return set
+})
+
+// --- Find Word tool ---
+const findQuery = ref('')
+const findMode = ref('all') // 'rows' | 'cols' | 'diagDown' | 'diagUp' | 'all'
+const findWrap = ref(true)
+const findColor = ref('#ffd54f')
+const findBackwards = ref(true)
+
+// --- DMS-style Find Word helpers (8 directions, wrap, backwards) ---
+function mod(n, m) { return ((n % m) + m) % m }
+function charAtRC(grid, r, c) {
+  if (!grid || r < 0)
+    return undefined
+  if (r >= grid.length)
+    return undefined
+  const row = grid[r]
+  if (!row || c < 0 || c >= row.length)
+    return undefined
+  return row[c]
+}
+function scanRows(grid, q, includeWrap = true, backwards = false) {
+  const res = []; if (!grid.length || !q)
+    return res; const L = q.length
+  for (let r = 0; r < grid.length; r++) {
+    const C = grid[r]?.length || 0; if (!C)
+      continue
+    for (let c0 = 0; c0 < C; c0++) {
+      if (!includeWrap) {
+        if (!backwards && c0 + L > C)
+          continue; if (backwards && c0 - (L - 1) < 0)
+          continue
+      }
+      let ok = true; const cells = []
+      for (let k = 0; k < L; k++) {
+        const c = backwards ? mod(c0 - k, C) : mod(c0 + k, C)
+        const ch = charAtRC(grid, r, c)
+        if (!ch || ch.toLowerCase() !== q[k].toLowerCase()) { ok = false; break }
+        cells.push([r, c])
+      }
+      if (ok)
+        res.push(cells)
+    }
+  }
+  return res
+}
+function scanCols(grid, q, includeWrap = true, backwards = false) {
+  const res = []; if (!grid.length || !q)
+    return res; const L = q.length; const R = grid.length
+  const Cmax = Math.max(...grid.map(r => r.length))
+  for (let c = 0; c < Cmax; c++) {
+    for (let r0 = 0; r0 < R; r0++) {
+      if (!includeWrap) {
+        if (!backwards && r0 + L > R)
+          continue; if (backwards && r0 - (L - 1) < 0)
+          continue
+      }
+      let ok = true; const cells = []
+      for (let k = 0; k < L; k++) {
+        const r = backwards ? mod(r0 - k, R) : mod(r0 + k, R)
+        const ch = charAtRC(grid, r, c)
+        if (!ch || ch.toLowerCase() !== q[k].toLowerCase()) { ok = false; break }
+        cells.push([r, c])
+      }
+      if (ok)
+        res.push(cells)
+    }
+  }
+  return res
+}
+function scanDiag(grid, q, dr, dc, includeWrap = true) {
+  const res = []; if (!grid.length || !q)
+    return res; const L = q.length
+  const R = grid.length; const Cmax = Math.max(...grid.map(r => r.length))
+  for (let r0 = 0; r0 < R; r0++) {
+    for (let c0 = 0; c0 < Cmax; c0++) {
+      let ok = true; const cells = []
+      let r = r0; let c = c0
+      for (let k = 0; k < L; k++) {
+        const ch = charAtRC(grid, r, c)
+        if (!ch || ch.toLowerCase() !== q[k].toLowerCase()) { ok = false; break }
+        cells.push([r, c])
+        r = includeWrap ? mod(r + dr, R) : r + dr
+        c = includeWrap ? mod(c + dc, Cmax) : c + dc
+        if (!includeWrap && (r < 0 || r >= R || c < 0 || c >= Cmax))
+          break
+      }
+      if (ok && cells.length === L)
+        res.push(cells)
+    }
+  }
+  return res
+}
+
+const findMatches = computed(() => {
+  const g = orientedGrid.value; const q = findQuery.value.trim()
+  if (!g.length || !q)
+    return []
+  const wrap = !!findWrap.value
+  const incBack = !!findBackwards.value
+  const out = []
+  const mode = findMode.value
+  if (mode === 'rows' || mode === 'all') {
+    out.push(...scanRows(g, q, wrap, false))
+    if (incBack)
+      out.push(...scanRows(g, q, wrap, true))
+  }
+  if (mode === 'cols' || mode === 'all') {
+    out.push(...scanCols(g, q, wrap, false))
+    if (incBack)
+      out.push(...scanCols(g, q, wrap, true))
+  }
+  if (mode === 'diagDown' || mode === 'all') {
+    out.push(...scanDiag(g, q, +1, +1, wrap))
+    if (incBack)
+      out.push(...scanDiag(g, q, -1, -1, wrap))
+  }
+  if (mode === 'diagUp' || mode === 'all') {
+    out.push(...scanDiag(g, q, -1, +1, wrap))
+    if (incBack)
+      out.push(...scanDiag(g, q, +1, -1, wrap))
+  }
+  return out
+})
+
+const findHighlightKeys = computed(() => {
+  const set = new Set()
+  for (const cells of findMatches.value) { for (const [r, c] of cells) { set.add(`${r}-${c}`) } }
+  return set
+})
 
 const inputMode = ref('wordlist') // 'wordlist' | 'freetext' | 'morse'
 const freeText = ref('')
@@ -34,8 +371,7 @@ const morseMapStyle = ref('12') // '12' (dot→1 dash→2) or '01' (dot→0 dash
 const printMode = ref(false)
 
 const tabs = ref([
-  { name: 'Word List', href: '#', current: true },
-  { name: 'Trail Trace', href: '#', current: false },
+  { name: 'Grid', href: '#', current: true },
 ])
 
 function setActiveTab(tabName) {
@@ -50,37 +386,36 @@ const navigation = [
   { name: 'Settings', href: '#', icon: XMarkIcon, current: false },
 ]
 // leave this here
-const morseWordsInputsWithE = ref([
-  'EEVIRTUALLYE',
-  'EEEEEEINVISIBLE',
-  'EESHADOWEE',
-  'FORCESEEEEE',
-  'LUCIDEEE',
-  'MEMORYE',
-  'RQ',
-  'SOS',
-  'EDIGETALEEE',
-  'INTERPRETATIO',
-  'TISYOUR',
-  'POSITIONE',
-])
+// const wordInputsWithE = ref([
+//   'EEVIRTUALLYE',
+//   'EEEEEEINVISIBLE',
+//   'EESHADOWEE',
+//   'FORCESEEEEE',
+//   'LUCIDEEE',
+//   'MEMORYE',
+//   'RQ',
+//   'SOS',
+//   'EDIGETALEEE',
+//   'INTERPRETATIO',
+//   'TISYOUR',
+//   'POSITIONE',
+// ])
 
-const morseWordsInputs = ref([
-  'VIRTUALLY',
-  'INVISIBLE',
-  'SHADOW',
-  'FORCES',
-  'LUCID',
-  'MEMORY',
-  'DIGETAL',
-  'INTERPRETATIU',
-  'TISYOUR',
-  'POSITION',
-])
+// const wordInputs = ref([
+//   'VIRTUALLY',
+//   'INTERPRETATIU',
+//   'INVISIBLE',
+//   'TISYOUR',
+//   'LUCID',
+//   'SHADOW',
+//   'POSITION',
+//   'MEMORY',
+//   'FORCES',
+//   'DIGITAL',
+// ])
 // const wordInputs = ref([
 //   'OXNIKRBYRXVCBROYMZDOYSLSNICRXKSKMRDXBOIEVNCVVCVVXYRCXYCWBGHWXODZBXQKDSRXBKBZOCVXXOVOLVZSSKMKOGWDGXNSDOOXBKRMDOXOENBODXRKOYODPYVCONDSGOXRKOSYIDOIAROOXMDKIMBOSPDLBCZKWRROGOXKDKWKDOQIOOBVLDOOPYKCPSYDEODEKOYDYKBWKOOBDXBDSLCONNXSKKRDDWCDOGZSOBYKQBSOGPOLKOMDNNRSVMOSRCSDOQYOKYCNNBINVYBSDBUVWVORKQDNRKBNZXOYRWQPWPOEROOMNWBSZPOSWORXVCCDDBDFNYRG',
 // ])
-// 3, 14, 15, 9, 26,
 
 const wordInputs = ref([
   'SLOWLY',
@@ -340,31 +675,13 @@ const flatText = computed(() => {
     return freeText.value.replace(/\s+/g, '').toUpperCase()
   }
   else {
-    // Robust Morse normalization: accept common dot/dash variants and direct binary
-    const dotSet = new Set(['.', '·', '•', '∙', '●', morseDot.value])
-    const dashSet = new Set(['-', '–', '—', '−', '_', '━', '─', morseDash.value])
-
-    const s = morseInput.value.normalize('NFKC')
+    const s = morseInput.value.replace(/\s+/g, '')
     let out = ''
-    for (const raw of s) {
-      const ch = raw.trim()
-      if (!ch)
-        continue
-      if (dotSet.has(ch)) {
+    for (const ch of s) {
+      if (ch === morseDot.value)
         out += (morseMapStyle.value === '12' ? '1' : '0')
-      }
-      else if (dashSet.has(ch)) {
+      else if (ch === morseDash.value)
         out += (morseMapStyle.value === '12' ? '2' : '1')
-      }
-      else if (morseMapStyle.value === '01' && (ch === '0' || ch === '1')) {
-        // Allow direct 0/1 input when mapping is 01
-        out += ch
-      }
-      else if (morseMapStyle.value === '12' && (ch === '1' || ch === '2')) {
-        // Allow direct 1/2 input when mapping is 12
-        out += ch
-      }
-      // All other characters (slashes, pipes, etc.) are treated as separators and ignored
     }
     return out
   }
@@ -385,25 +702,16 @@ function getWrappedGrid(d, useExtended = useExtendedWords.value) {
   if (inputMode.value === 'wordlist') {
     flat = (useExtended ? wordInputsWithE.value : wordInputs.value).join('')
   }
-  else if (inputMode.value === 'morse') {
-    // In Morse mode, load the predefined word lists into the scytale grid (dots/dashes handled later)
-    flat = (useExtended ? morseWordsInputsWithE.value : morseWordsInputs.value).join('')
-  }
   else {
-    // freetext path
     flat = flatText.value
   }
   const rows = Math.ceil(flat.length / d)
   const rotated = flat.slice(offset.value) + flat.slice(0, offset.value)
   const padded = rotated.padEnd(rows * d, '.')
 
-  const colorSource = (
-    inputMode.value === 'wordlist'
-      ? (useExtended ? wordInputsWithE.value : wordInputs.value)
-      : inputMode.value === 'morse'
-        ? (useExtended ? morseWordsInputsWithE.value : morseWordsInputs.value)
-        : [flat]
-  )
+  const colorSource = (inputMode.value === 'wordlist')
+    ? (useExtended ? wordInputsWithE.value : wordInputs.value)
+    : [flat]
   const letterColorMap = []
   colorSource.forEach((word, wordIdx) => {
     for (let i = 0; i < word.length; i++) {
@@ -545,16 +853,15 @@ function partialWordScan(str, dictionarySet, minMatchLength = 3) {
   return hits
 }
 
-// Letter frequencies computed property, moved here from erroneous script block
 const letterFrequencies = computed(() => {
   const freq = {}
-  const text = getWrappedGrid(diameter.value)
-    .flat()
-    .map(cell => cell.char)
-    .filter(c => /^[A-Z]$/i.test(c))
-  for (const char of text) {
-    const uc = char.toUpperCase()
-    freq[uc] = (freq[uc] || 0) + 1
+  for (const row of orientedGrid.value) {
+    for (const ch of row) {
+      if (/^[A-Z]$/i.test(ch)) {
+        const uc = ch.toUpperCase()
+        freq[uc] = (freq[uc] || 0) + 1
+      }
+    }
   }
   return Object.fromEntries(Object.entries(freq).sort((a, b) => b[1] - a[1]))
 })
@@ -620,26 +927,7 @@ function toggleDiameterVisibility(d) {
 }
 
 function handleCellClick(cell) {
-  const key = `${cell.row}-${cell.col}-${cell.diameter}`
-  if (currentDiameter.value === null)
-    return
-  const trailsForD = trailInputs.value[currentDiameter.value] || []
-  const activeTrail = trailsForD.find(t => t.name)
-  if (!activeTrail)
-    return
-  const trailKey = `${currentDiameter.value}:${activeTrail.name}`
-  if (!trails.value[trailKey]) {
-    trails.value[trailKey] = { color: activeTrail.color || '#ddd580', cells: [] }
-  }
-  const cellIndex = trails.value[trailKey].cells.findIndex(c => c.key === key)
-  if (cellIndex === -1) {
-    trails.value[trailKey].cells.push({ ...cell, key })
-  }
-  else {
-    trails.value[trailKey].cells.splice(cellIndex, 1)
-  }
-  // simple selection tracker
-  const selKey = `${cell.row}-${cell.col}-${cell.diameter}`
+  const selKey = `${cell.row}-${cell.col}`
   const i = selectedCells.value.findIndex(c => c.key === selKey)
   if (i === -1) {
     selectedCells.value.push({ ...cell, key: selKey, order: selectedCells.value.length + 1 })
@@ -777,7 +1065,7 @@ const transpositionRows = computed(() => {
           <div class="lg:flex lg:items-center lg:justify-between">
             <div class="flex-1 min-w-0">
               <h2 class="font-bold text-gray-900 text-2xl/7 sm:truncate sm:text-3xl sm:tracking-tight">
-                Kryptos Scytale Cipher
+                Kryptos Copperplate
               </h2>
             </div>
             <div class="flex mt-5 lg:ml-4 lg:mt-0">
@@ -816,81 +1104,38 @@ const transpositionRows = computed(() => {
               </Menu>
             </div>
           </div>
-          <Disclosure
-            v-for="d in Array.from({ length: 40 }, (_, i) => i + 1).filter(d => d > 1)" :key="d" as="div"
-            class="mb-6 min-w-2/5"
-          >
-            <DisclosureButton
-              class="flex items-center justify-between w-full px-4 py-2 text-xl font-medium text-left text-gray-100 bg-gray-800 rounded-lg hover:bg-gray-700 focus:outline-none focus-visible:ring focus-visible:ring-purple-500 focus-visible:ring-opacity-75"
+          <div class="mb-6 min-w-2/5">
+            <div class="mb-1 font-bold text-green-400">
+              Static Grid
+            </div>
+            <div
+              class="relative text-lg bg-gray-900 border shadow-inner scanlines font-kryptos text-lime-300 min-w-2/5 border-primary"
             >
-              <span>Diameter {{ d }}</span>
-              <ChevronDownIcon class="w-5 h-5 text-gray-300" />
-            </DisclosureButton>
-            <DisclosurePanel class="px-4 pt-4 pb-2 text-sm text-gray-200">
-              <div class="flex flex-col gap-4 mb-4 md:flex-row">
-                <div class="flex-1">
-                  <div class="mb-1 font-bold text-green-400">
-                    Without EEEs
-                  </div>
-                  <div
-                    class="relative text-lg bg-gray-900 border shadow-inner scanlines font-kryptos text-lime-300 min-w-2/5 border-primary"
+              <div>
+                <div v-for="(row, rIdx) in orientedGrid" :key="`row-${rIdx}`" class="flex">
+                  <!-- left-edge bark marker gutter -->
+                  <span
+                    class="w-3 mr-1 text-right select-none"
+                    :style="{
+                      color: barkMarkerRows.has(rIdx) ? (printMode ? '#000' : '#f59e0b') : 'transparent',
+                    }"
+                    title="Bark mark"
                   >
-                    <template v-if="true">
-                      <!-- Render grid with useExtendedWords = false -->
-                      <div>
-                        <div
-                          v-for="(row, rowIdx) in getWrappedGrid(d, false)" :key="`row-noeee-${d}-${rowIdx}`"
-                          class="flex"
-                        >
-                          <span
-                            v-for="(cell, cidx) in row" :key="cidx" class="px-1 cursor-pointer" :style="{
-                              color: cell.color,
-                              backgroundColor: Object.values(trails)
-                                .filter(t => t.cells.some(c => c.key === `${cell.row}-${cell.col}-${d}`))
-                                .map(t => t.color)[0] || 'transparent',
-                              border: '1px solid transparent',
-                            }" @click="handleCellClick({ ...cell, diameter: d })"
-                          >
-                            {{ cell.char }}
-                          </span>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
-                </div>
-                <div class="flex-1">
-                  <div class="mb-1 font-bold text-pink-400">
-                    With EEEs
-                  </div>
-                  <div
-                    class="relative text-lg bg-gray-900 border shadow-inner scanlines font-kryptos text-lime-300 min-w-2/5 border-primary"
+                    ●
+                  </span>
+                  <span
+                    v-for="(ch, cIdx) in row" :key="`c-${cIdx}`" class="px-1 cursor-pointer select-none" :style="{
+                      color: findHighlightKeys.has(`${rIdx}-${cIdx}`) ? '#000' : (letterHighlights[ch?.toUpperCase()] ? '#000' : '#a7f3d0'),
+                      backgroundColor: findHighlightKeys.has(`${rIdx}-${cIdx}`) ? findColor : (letterHighlights[ch?.toUpperCase()] || 'transparent'),
+                      border: printMode ? '1px solid #ddd' : '1px solid transparent',
+                    }" @click="handleCellClick({ char: ch, row: rIdx, col: cIdx })"
                   >
-                    <template v-if="true">
-                      <!-- Render grid with useExtendedWords = true -->
-                      <div>
-                        <div
-                          v-for="(row, rowIdx) in getWrappedGrid(d, true)" :key="`row-eee-${d}-${rowIdx}`"
-                          class="flex" :d="d"
-                        >
-                          <span
-                            v-for="(cell, cidx) in row" :key="cidx" class="px-1 cursor-pointer" :style="{
-                              color: cell.color,
-                              backgroundColor: Object.values(trails)
-                                .filter(t => t.cells.some(c => c.key === `${cell.row}-${cell.col}-${d}`))
-                                .map(t => t.color)[0] || 'transparent',
-                              border: '1px solid transparent',
-                            }" @click="handleCellClick({ ...cell, diameter: d })"
-                          >
-                            {{ cell.char }}
-                          </span>
-                        </div>
-                      </div>
-                    </template>
-                  </div>
+                    {{ ch }}
+                  </span>
                 </div>
               </div>
-            </DisclosurePanel>
-          </Disclosure>
+            </div>
+          </div>
         </div>
       </div>
     </main>
@@ -926,60 +1171,47 @@ const transpositionRows = computed(() => {
           </nav>
           <div v-if="tabs[0].current">
             <div class="flex flex-col mt-1 sm:mt-0 ">
-              <!-- <div class="flex flex-wrap mb-4">
-              <label>Input Text:</label>
-              <div class="w-full p-2 text-sm text-black uppercase break-words bg-white border border-gray-300 font-kryptos">
-                {{ displayText }}
-              </div>
-            </div> -->
-              <div class="flex items-center gap-4 mt-2 text-sm text-gray-500">
-                <label class="font-semibold">Input:</label>
-                <label><input v-model="inputMode" type="radio" value="wordlist" /> Word List</label>
-                <label><input v-model="inputMode" type="radio" value="freetext" /> Free Text</label>
-                <label><input v-model="inputMode" type="radio" value="morse" /> Morse</label>
+              <textarea
+                ref="seedTA" aria-hidden="true" tabindex="-1"
+                style="position:absolute;left:-10000px;top:-10000px;width:1px;height:1px;opacity:0;"
+              >
+EMUFPHZLRFAXYUSDJKZLDKRNSHGNFIVJ
+YQTQUXQBQVYUVLLTREVJYQTMKYRDMFD
+VFPJUDEEHZWETZYVGWHKKQETGFQJNCE
+GGWHKK?DQMCPFQZDQMMIAGPFXHQRLG
+TIMVMZJANQLVKQEDAGDVFRPJUNGEUNA
+QZGZLECGYUXUEENJTBJLBQCRTBJDFHRR
+YIZETKZEMVDUFKSJHKFWHKUWQLSZFTI
+HHDDDUVH?DWKBFUFPWNTDFIYCUQZERE
+EVLDKFEZMOQQJLTTUGSYQPFEUNLAVIDX
+FLGGTEZ?FKZBSFDQVGOGIPUFXHHDRKF
+FHQNTGPUAECNUVPDJMQCLQUMUNEDFQ
+ELZZVRRGKFFVOEEXBDMVPNFQXEZLGRE
+DNQFMPNZGLFLPMRJQYALMGNUVPDXVKP
+DQUMEBEDMHDAFMJGZNUPLGEWJLLAETG
+ENDYAHROHNLSRHEOCPTEOIBIDYSHNAIA
+CHTNREYULDSLLSLLNOHSNOSMRWXMNE
+TPRNGATIHNRARPESLNNELEBLPIIACAE
+WMTWNDITEENRAHCTENEUDRETNHAEOE
+TFOLSEDTIWENHAEIOYTEYQHEENCTAYCR
+EIFTBRSPAMHHEWENATAMATEGYEERLB
+TEEFOASFIOTUETUAEOTOARMAEERTNRTI
+BSEDDNIAAHTTMSTEWPIEROAGRIEWFEB
+AECTDDHILCEIHSITEGOEAOSDDRYDLORIT
+RKLMLEHAGTDHARDPNEOHMGFMFEUHE
+ECDMRIPFEIMEHNLSSTTRTVDOHW?OBKR
+UOXOGHULBSOLIFBBWFLRVQQPRNGKSSO
+TWTQSJQSSEKZZWATJKLUDIAWINFBNYP
+VTTMZFPKWGDKZXTJCDIGKUHUAUEKCAR
+</textarea>
+              <div class="flex flex-wrap items-center gap-4 mt-2 text-sm text-gray-500">
+                <label class="font-semibold">Orientation:</label>
+                <label><input v-model="gridOrientation" type="radio" value="normal" /> Normal</label>
+                <label><input v-model="gridOrientation" type="radio" value="tree" /> TREE (first column → first
+                  row)</label>
+                <label><input v-model="gridOrientation" type="radio" value="roots" /> ROOTS (right edge → top)</label>
                 <label class="ml-4"><input v-model="printMode" type="checkbox" /> Print-Friendly</label>
               </div>
-
-              <div v-if="inputMode === 'freetext'" class="mt-2">
-                <label class="block text-sm">Free Text Input</label>
-                <textarea v-model="freeText" rows="4" class="w-full p-2 text-black uppercase font-kryptos"></textarea>
-              </div>
-
-              <div v-else-if="inputMode === 'morse'" class="mt-2 space-y-2">
-                <div class="flex items-center gap-3">
-                  <label>Dot <input v-model="morseDot" class="w-12 ml-1 text-black" /></label>
-                  <label>Dash <input v-model="morseDash" class="w-12 ml-1 text-black" /></label>
-                  <label>Map
-                    <select v-model="morseMapStyle" class="ml-1 text-black">
-                      <option value="12">dot→1 dash→2</option>
-                      <option value="01">dot→0 dash→1</option>
-                    </select>
-                  </label>
-                </div>
-                <label class="block text-sm">Morse Input</label>
-                <textarea v-model="morseInput" rows="4" class="w-full p-2 font-mono text-black"></textarea>
-                <div class="text-xs text-gray-400">
-                  Processed: {{ flatText }}
-                </div>
-              </div>
-              <div class="flex items-center mt-2 text-sm text-gray-500">
-                <label><input v-model="reverseRows" type="checkbox" /> Reverse Rows</label>
-              </div>
-              <div class="flex items-center mt-2 text-sm text-gray-500">
-                <label><input v-model="reverseColumns" type="checkbox" /> Reverse Columns</label>
-              </div>
-              <div class="flex items-center mt-2 text-sm text-gray-500">
-                <label><input v-model=" useExtendedWords" type="checkbox" /> Include EEEs</label>
-              </div>
-              <!-- <div class="flex items-center mt-2 text-sm text-gray-500">
-              <label>Diameter:</label>
-              <input v-model="diameter" type="number" class="w-20 p-1 ml-2 text-black" />
-            </div> -->
-              <div class="flex items-center mt-2 text-sm text-gray-500">
-                <label>Offset:</label>
-                <input v-model="offset" type="number" class="w-20 p-1 ml-2 text-black" />
-              </div>
-              <div class="flex items-center mt-2 text-sm text-gray-500"></div>
             </div>
             <div class="p-1 border border-primary">
               <h2 class="mb-2 text-lg">
@@ -992,7 +1224,6 @@ const transpositionRows = computed(() => {
                   Clear
                 </button>
               </div>
-
               <div class="flex flex-wrap gap-1 mb-4 text-black">
                 <button
                   v-for="letter in alphabet" :key="letter" class="w-8 h-8 font-bold border rounded font-kryptos"
@@ -1002,26 +1233,33 @@ const transpositionRows = computed(() => {
                 </button>
               </div>
             </div>
-            <div class="p-1 border border-primary">
+            <div class="p-1 mt-2 border border-primary">
               <h2 class="mb-2 text-lg">
-                Word Stack Order:
+                Find Word
               </h2>
-              <div v-for="(word, index) in activeWordSet" :key="index" class="flex items-center gap-2 mb-1">
-                <div class="w-56 p-1 text-sm text-black bg-white font-kryptos">
-                  {{ word }}
-                </div>
-                <button
-                  v-if="activeWordSet === wordInputs" :disabled="index === 0" class="px-2 "
-                  @click="() => moveUp(index)"
-                >
-                  ↑
+              <div class="flex flex-wrap items-center gap-3 mb-2 text-sm">
+                <input
+                  v-model="findQuery" placeholder="search…"
+                  class="p-1 text-black border border-gray-400 rounded"
+                />
+                <label>Mode
+                  <select v-model="findMode" class="ml-1 text-black">
+                    <option value="rows">Rows</option>
+                    <option value="cols">Columns</option>
+                    <option value="diagDown">Diag ↓→ (wrap)</option>
+                    <option value="diagUp">Diag ↑→ (wrap)</option>
+                    <option value="all">All (8 dirs)</option>
+                  </select>
+                </label>
+                <label class="ml-2"><input v-model="findWrap" type="checkbox" /> Wrap</label>
+                <label class="ml-2"><input v-model="findBackwards" type="checkbox" /> Backwards</label>
+                <label class="ml-2">Color <input v-model="findColor" type="color" class="ml-1" /></label>
+                <button class="px-2 py-1 text-sm" @click="findQuery = ''">
+                  Clear
                 </button>
-                <button
-                  v-if="activeWordSet === wordInputs" :disabled="index === wordInputs.length - 1" class="px-2 "
-                  @click="() => moveDown(index)"
-                >
-                  ↓
-                </button>
+              </div>
+              <div class="text-xs text-gray-400">
+                Matches: {{ findMatches.length }}
               </div>
             </div>
             <div class="p-1 border border-primary">
@@ -1040,48 +1278,42 @@ const transpositionRows = computed(() => {
               <h2 class="mb-2 text-lg">
                 Selection Tracker
               </h2>
-              <div class="flex gap-2 mb-2">
+              <div class="flex flex-wrap gap-2 mb-2">
                 <button class="px-2 py-1 text-sm" @click="selectedCells = []">
                   Clear
                 </button>
                 <button class="px-2 py-1 text-sm" @click="selectedCells.pop()">
                   Remove Last
                 </button>
+                <button class="px-2 py-1 text-sm" @click="copySelectedPath">
+                  Copy Path
+                </button>
+                <button class="px-2 py-1 text-sm" @click="copyRowSpan">
+                  Copy Row Span (first↔last)
+                </button>
+                <button class="px-2 py-1 text-sm" @click="copyColSpan">
+                  Copy Col Span (first↕last)
+                </button>
+                <button class="px-2 py-1 text-sm" @click="sendSelectionToDMS('path')">
+                  Send Path → DMS
+                </button>
+                <button class="px-2 py-1 text-sm" @click="sendSelectionToDMS('row')">
+                  Send Row Span → DMS
+                </button>
+                <button class="px-2 py-1 text-sm" @click="sendSelectionToDMS('col')">
+                  Send Col Span → DMS
+                </button>
+                <button class="px-2 py-1 text-sm" @click="copyRowsBetween">
+                  Copy Rows Between (full rows)
+                </button>
+                <button class="px-2 py-1 text-sm" @click="sendRowsBetweenToDMS">
+                  Send Rows Between → DMS
+                </button>
               </div>
               <textarea
-                :value="selectedCells.map(c => `${c.char} (r${c.row},c${c.col},d${c.diameter}) #${c.order}`).join('\\n')"
+                :value="selectedCells.map(c => `${c.char} (r${c.row},c${c.col}) #${c.order}`).join('\n')"
                 rows="6" class="w-full p-2 font-mono text-black"
               ></textarea>
-            </div>
-          </div>
-          <div>
-            <div v-if="tabs[1].current" class="px-4 py-10 sm:px-6 lg:px-8 lg:py-6">
-              <!-- Trail Trace content will go here -->
-              <div class="space-y-4">
-                <div
-                  v-for="d in Array.from({ length: 28 }, (_, i) => i + 1).filter(d => d > 1)" :key="`input-${d}`"
-                  class="p-2 text-black bg-white border border-gray-300 rounded"
-                >
-                  <h3 class="mb-2 text-lg font-semibold text-gray-800">
-                    Diameter {{ d }}
-                  </h3>
-                  <div class="space-y-2">
-                    <div
-                      v-for="(trail, i) in trailInputs[d] || []" :key="`trail-${d}-${i}`"
-                      class="flex items-center gap-2"
-                    >
-                      <input
-                        v-model="trail.name" placeholder="Word name" class="p-1 border border-gray-400 rounded"
-                        @focus="currentDiameter = d"
-                      />
-                      <input v-model="trail.color" type="color" />
-                    </div>
-                  </div>
-                  <button class="flex items-center gap-1 mt-2 text-sm text-blue-600" @click="addTrailInput(d)">
-                    <span>+</span> Add Trail
-                  </button>
-                </div>
-              </div>
             </div>
           </div>
         </div>

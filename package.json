@@ -1,6 +1,7 @@
 {
-  "name": "scytaleCipher",
-  "description": "A really cool Edge Site for scytaleCipher",
+  "name": "kryptos",
+  "description": "Tools to solve Kryptos",
+
   "scripts": {
     "generate:images": "node scripts/generateImageManifest.mjs",
     "build": "npm run generate:images && nuxt build",
@@ -11,13 +12,25 @@
   },
   "dependencies": {
     "@fancyapps/ui": "^5.0.36",
+    "@headlessui/vue": "^1.7.23",
+    "@heroicons/vue": "^2.2.0",
     "@nuxtjs/tailwindcss": "6.13.2",
+    "@tailwindcss/vite": "^4.1.12",
     "@vee-validate/nuxt": "^4.15.0",
     "@vee-validate/rules": "^4.15.0",
     "@vee-validate/zod": "^4.15.0",
+    "@vueuse/core": "^13.4.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-vue-next": "^0.539.0",
     "nuxt": "^3.16.1",
+    "reka-ui": "^2.4.1",
     "scrollreveal": "^4.0.9",
+    "shadcn-nuxt": "2.2.0",
     "swiper": "^11.2.6",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^4.1.12",
+    "tw-animate-css": "^1.3.7",
     "vue": "^3.5.13",
     "vue-imask": "^7.6.1",
     "vue-router": "^4.5.0",
@@ -28,6 +41,7 @@
     "@antfu/eslint-config": "^4.11.0",
     "eslint": "^9",
     "nitro-cloudflare-dev": "^0.2.2",
+    "typescript": "^5.9.2",
     "wrangler": "^4.14.4"
   }
 }
