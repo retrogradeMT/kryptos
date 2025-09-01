@@ -1,26 +1,6 @@
-import { useToolBus } from '~/composables/useToolBus'
-const payloadText = useStorage('payload:text', '')
-const payloadMode = useStorage('payload:mode', 'freetext')
-const bus = useToolBus()
-onMounted(() => {
-  try { bus.value?.on?.('sendto:setText', (p:any) => { if (p?.text) payloadText.value = String(p.text) }) } catch {}
-})
 <script setup lang="ts">
 import { useRoute, useRouter } from '#imports'
-import {
-  Dialog,
-  DialogPanel,
-  Disclosure,
-  DisclosureButton,
-  DisclosurePanel,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuItems,
-  TransitionChild,
-  TransitionRoot,
-} from '@headlessui/vue'
-import { Bars3Icon, ChevronDownIcon, XMarkIcon } from '@heroicons/vue/24/outline'
+
 import { useStorage } from '@vueuse/core'
 
 import DiameterPanel from '~/components/DiameterPanel.vue'
@@ -36,7 +16,19 @@ import SendToPanel from '~/components/SendToPanel.vue'
 import ToolMenu from '~/components/toolMenu.vue'
 import WordStackPanel from '~/components/WordStackPanel.vue'
 import { useCipherState } from '~/composables/useCipherState'
+import { useToolBus } from '~/composables/useToolBus'
 import { useUrlState } from '~/composables/useUrlState'
+
+const bus = useToolBus()
+onMounted(() => {
+  try {
+    bus.value?.on?.('sendto:setText', (p: any) => {
+      if (p?.text)
+        payloadText.value = String(p.text)
+    })
+  }
+  catch { }
+})
 
 const orientation = ref<'normal' | 'tree' | 'roots'>('normal')
 // Find panel UI state
@@ -530,6 +522,20 @@ function onDragStart(e) {
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
 }
+
+function onKeyResize(ev: KeyboardEvent) {
+  const step = 16
+  if (ev.key === 'ArrowUp') {
+    dashboardHeight.value = Math.max(120, dashboardHeight.value - step)
+  }
+  else if (ev.key === 'ArrowDown') {
+    dashboardHeight.value = dashboardHeight.value + step
+  }
+  else {
+    return
+  }
+  ev.preventDefault()
+}
 </script>
 
 <template>
@@ -537,13 +543,14 @@ function onDragStart(e) {
     <!-- Header -->
     <header class="px-4 py-2 border-b">
       <PageTitle title="Kryptos Tools" />
+      <ToolMenu />
     </header>
 
     <!-- Main layout: Dashboard (top), Resizer, Child Content (bottom) -->
     <div class="flex flex-col flex-1 overflow-hidden">
       <!-- Dashboard (moved from aside) -->
       <section class="overflow-auto border-b bg-white/60 backdrop-blur" :style="{ height: `${dashboardHeight}px` }">
-        <div class="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        <div class="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-1">
           <OrientationPanel
             v-if="controls.orientation" v-model:orientation="orientation" v-model:pad-char="padChar"
             :show-pad="true"
@@ -581,11 +588,9 @@ function onDragStart(e) {
       </section>
 
       <!-- Resizer -->
-      <div class="h-2 select-none bg-slate-200 hover:bg-slate-300 cursor-row-resize" @mousedown="onDragStart"></div>
 
       <!-- Child content full-width -->
       <section class="flex-1 p-4 overflow-auto">
-        <ToolMenu />
         <NuxtPage />
       </section>
     </div>

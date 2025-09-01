@@ -1,50 +1,85 @@
 <script lang="ts" setup>
-import { useRouter } from '#imports'
-import { computed, onMounted } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { useClipboard } from '~/composables/useClipboard'
+import { useGlobalState } from '~/composables/useGlobalState'
 import { useToolBus } from '~/composables/useToolBus'
-import { seedOptions, textSeeds } from '~/lib/textSeeds'
+import { seedOptions, textSeeds } from '~/lib/TextSeeds'
 
-// Props & emits
-const props = withDefaults(defineProps<{
-  text?: string
-  mode?: 'freetext' | 'wordlist' | 'morse'
-  listen?: boolean
-  targets?: Array<{ label: string, path: string, query?: Record<string, any> }>
-}>(), {
-  text: '',
-  mode: 'freetext',
-  listen: true,
-  targets: () => [],
+const { currentText, setCurrentText, updateCurrentText } = useGlobalState()
+const updateNow: (t: string) => void = (updateCurrentText as any) ?? ((t: string) => { currentText.value = t })
+
+const rawText = ref<string>('')
+
+const lastPushed = ref('')
+const SOURCE_ID = 'SendToPanel'
+const isSyncingFromGlobal = ref(false)
+
+function applyReverse() {
+  if (!rawText.value)
+    return
+  rawText.value = rawText.value.split('').reverse().join('')
+}
+function applyStripSpaces() {
+  if (!rawText.value)
+    return
+  rawText.value = rawText.value.replace(/\s+/g, '')
+}
+function applyAlphaOnly() {
+  if (!rawText.value)
+    return
+  rawText.value = rawText.value.replace(/[^A-Z]/gi, '')
+}
+
+onMounted(() => {
+  try {
+    rawText.value = currentText.value || ''
+  }
+  catch {}
 })
 
-const emit = defineEmits<{
-  (e: 'update:text', v: string): void
-  (e: 'update:mode', v: 'freetext' | 'wordlist' | 'morse'): void
-}>()
+watch(rawText, (next) => {
+  if (typeof next !== 'string')
+    return
+  if (isSyncingFromGlobal.value)
+    return
+  if (next === lastPushed.value)
+    return
+  if (next === (currentText.value || ''))
+    return
+  lastPushed.value = next
+  try { updateNow(next) }
+  catch {}
+}, { flush: 'post' })
 
-// Two-way bindings
-const text = computed({
-  get: () => props.text ?? '',
-  set: v => emit('update:text', v || ''),
-})
-const mode = computed({
-  get: () => props.mode ?? 'freetext',
-  set: v => emit('update:mode', v),
-})
+function loadFromGlobal() {
+  const incoming = currentText.value || ''
+  if (incoming !== rawText.value) {
+    isSyncingFromGlobal.value = true
+    rawText.value = incoming
+    Promise.resolve().then(() => { isSyncingFromGlobal.value = false })
+  }
+}
+
+function saveToGlobal() {
+  const payload = rawText.value || ''
+  const note = 'SendToPanel (applied)'
+  try { setCurrentText(payload, SOURCE_ID, note) }
+  catch {}
+}
 
 // Tool bus hookup (so other tools can push text here)
 const bus = useToolBus()
 onMounted(() => {
-  if (!props.listen)
-    return
   try {
     bus.value?.on?.('sendto:setText', (payload: any) => {
       if (!payload)
         return
-      if (typeof payload.text === 'string')
-        text.value = payload.text
+      if (payload.source === SOURCE_ID)
+        return // ignore our own emissions
+      if (typeof payload.text === 'string' && payload.text !== rawText.value) {
+        rawText.value = payload.text
+      }
     })
   }
   catch {}
@@ -56,26 +91,19 @@ async function pasteFromClipboard() {
   try {
     const t = await navigator.clipboard.readText()
     if (t)
-      text.value = t
+      rawText.value = t
   }
   catch {}
 }
 function copyAll() {
-  if (text.value)
-    copy(text.value)
+  if (rawText.value)
+    copy(rawText.value)
 }
-function clearAll() { text.value = '' }
+function clearAll() { rawText.value = '' }
 
 // Seeds
 function applySeed(key: keyof typeof textSeeds) {
-  text.value = textSeeds[key] || ''
-}
-
-// Navigate to targets without shoving text in the query (shared state handles it)
-const router = useRouter()
-async function openTarget(tgt: { label: string, path: string, query?: Record<string, any> }) {
-  try { await router.push({ path: tgt.path, query: tgt.query || {} }) }
-  catch {}
+  rawText.value = textSeeds[key] || ''
 }
 </script>
 
@@ -114,24 +142,34 @@ async function openTarget(tgt: { label: string, path: string, query?: Record<str
       <button class="px-2 py-1 border rounded" @click="pasteFromClipboard">
         Paste
       </button>
-      <button class="px-2 py-1 border rounded" :disabled="!text" @click="copyAll">
+      <button class="px-2 py-1 border rounded" :disabled="!rawText || !rawText.length" @click="copyAll">
         Copy
       </button>
-      <button class="px-2 py-1 border rounded" :disabled="!text" @click="clearAll">
+      <button class="px-2 py-1 border rounded" :disabled="!rawText" @click="clearAll">
         Clear
+      </button>
+      <button class="px-2 py-1 border rounded" @click="loadFromGlobal">
+        Load Global
+      </button>
+      <button class="px-2 py-1 border rounded" :disabled="!rawText || !rawText.length" @click="saveToGlobal">
+        Add To Saved History
+      </button>
+
+      <!-- Transform tools (one‑shot, in‑place) -->
+      <button class="px-2 py-1 border rounded" :disabled="!rawText" @click="applyReverse">
+        Reverse
+      </button>
+      <button class="px-2 py-1 border rounded" :disabled="!rawText" @click="applyStripSpaces">
+        Remove spaces/newlines
+      </button>
+      <button class="px-2 py-1 border rounded" :disabled="!rawText" @click="applyAlphaOnly">
+        Keep alphabetic only
       </button>
     </div>
 
     <!-- Text area -->
-    <div class="mt-2">
-      <textarea v-model="text" rows="6" class="w-full p-2 font-mono text-black border rounded" placeholder="Type, paste, or seed text…"></textarea>
-    </div>
-
-    <!-- Targets -->
-    <div v-if="props.targets?.length" class="flex flex-wrap gap-2 mt-3">
-      <button v-for="tgt in props.targets" :key="tgt.label" class="px-2 py-1 border rounded" @click="openTarget(tgt)">
-        {{ tgt.label }}
-      </button>
+    <div class="grid gap-2 mt-2">
+      <textarea v-model="rawText" rows="6" class="w-full p-2 font-mono text-black border rounded" placeholder="Type, paste, or seed text…"></textarea>
     </div>
   </div>
 </template>
